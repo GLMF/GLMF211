@@ -1,0 +1,169 @@
+#!/bin/bash
+
+declare -A readonly CMD_LIST=(
+    ['apt']='--backup restore show-backup'
+    # Ajouter ici des commandes au format ['commande']='option1 option2...'
+)
+readonly PACKAGES_LIST='/home/tristan/bin/data/boost_cmd/packages.lst'
+
+
+# Message d'aide
+# ${1} : Type de message d'aide
+#        - help : Syntaxe à utiliser
+# ${2} : 0     = Sortie avec le code 0
+#        autre = Pas de sortie
+usage() {
+    if [ "${1}" == "help" ]; then
+        local hdd_number=0
+        echo 'BOOST COMMANDS TOOL'
+        echo 'Usage: boost_cmd <command> [options]'
+        echo '       <command> :'
+        echo '                   Name of the command to boost or :'
+        echo '                   - list : list of the boostable commands'
+        echo '                   - help : this message'
+        echo '       [options] : Options/Parameters fo the <command>'
+        if [ ${2} -eq 0 ]; then
+            exit 0
+        fi
+    fi
+}
+
+# Affiche la liste des commandes boostables et les options qui leur
+# sont associées
+list_commands() {
+    echo 'BOOST COMMANDS TOOL'
+    echo 'Available commands:'
+    for cmd in ${!CMD_LIST[@]}; do
+        echo "  - ${cmd} :"
+        for option in ${CMD_LIST[${cmd}]}; do
+            echo "    * ${option}"
+        done
+    done
+    exit 0
+}
+
+# Teste si une commande passée en paramètre fait bien partie des
+# commandes prises en charge
+# ${1} : Nom de la commande à tester
+is_in_commands_list() {
+    if [ "${CMD_LIST[${1}]}" == '' ]; then
+        return 1
+    else
+        return 0
+    fi
+}
+
+# Boost pour la commande apt :
+# - option --backup pour enregistrer le nom d'un paquetage
+# - commande restore pour installer les paquetages enregistrés
+# ${@} : Liste des paramètres
+boost_apt() {
+    local parameters=()
+    local backup=0
+    local restore=0
+    local show=0
+
+    for parameter in ${@}; do
+        case ${CMD_LIST['apt']} in 
+            *${parameter}*)
+                case ${parameter} in
+                    '--backup')
+                        backup=1
+                        ;;
+                    'restore')
+                        restore=1
+                        ;;
+                    'show-backup')
+                        show=1
+                        ;;
+                esac
+                ;;
+            *)
+                parameters+=(${parameter})
+        esac
+    done
+
+    if [ ${backup} -eq 1 ] && [ ${restore} -eq 0 ] && [ ${show} -eq 0 ]; then
+        if [ "${parameters[1]}" == 'install' ]; then
+            # Exécute la commande initiale
+            local return_code
+            echo
+            eval apt ${parameters[@]:1}
+            return_code=${?}
+            if [ ${return_code} -ne 0 ]; then
+                echo 'BOOST APT'
+                echo "Error : apt standard command failed"
+                exit ${return_code}
+            fi
+
+            # Recherche si le paquet est déjà enregistré
+            local exists=0
+            while read -r package || [[ -n "${package}" ]]; do
+                if [ "${package}" == "${parameters[2]}" ]; then
+                    exists=1
+                    break
+                fi
+            done < ${PACKAGES_LIST}
+
+            if [ ${exists} -eq 0 ]; then
+                echo ${parameters[2]} >> ${PACKAGES_LIST}
+                echo 'BOOST APT'
+                echo ">>> Package '${parameters[2]}' backed up successfully"
+            else
+                echo 'BOOST APT'
+                echo ">>> Package '${parameters[2]}' already backed up"
+            fi
+
+        else
+            echo "Error : You must specify 'install' command with '--backup' option"
+            exit 2
+        fi
+    elif [ ${restore} -eq 1 ] && [ ${backup} -eq 0 ] && [ ${show} -eq 0 ]; then
+        if [ ${#parameters[@]} -eq 1 ]; then
+            # Installe les paquetages du fichier packages.lst
+            echo 'BOOST APT'
+            while read -r package || [[ -n "${package}" ]]; do
+                echo ">>> Install package '${package}'"
+                eval apt install -y ${package}
+            done < ${PACKAGES_LIST}
+        else
+            echo "Error : You must specify only additional command 'restore'"
+            exit 2
+        fi
+    elif [ ${show} -eq 1 ] && [ ${backup} -eq 0 ] && [ ${restore} -eq 0 ]; then
+        if [ ${#parameters[@]} -eq 1 ]; then
+            # Liste les paquetages du fichier packages.lst
+            echo 'BOOST APT'
+            echo "List of packages in '${PACKAGES_LIST}'"
+            while read -r package || [[ -n "${package}" ]]; do
+                echo ">>> ${package}"
+            done < ${PACKAGES_LIST}
+        else
+            echo "Error : You must specify only additional command 'show-backup'"
+            exit 2
+        fi
+    elif [ ${show} -eq 0 ] && [ ${backup} -eq 0 ] && [ ${restore} -eq 0 ]; then
+        eval ${parameters[@]}
+    else
+        echo 'Error : You must specify one and only one additional command'
+    fi
+}
+
+
+if [ "${#}" -eq 1 ] && [ "${1}" == 'list' ]; then
+    list_commands
+elif [ "${#}" -eq 1 ] && [ "${1}" == 'help' ]; then
+    usage 'help' 0
+elif is_in_commands_list ${1}; then
+    case ${1} in
+        'apt')
+            boost_apt ${@}
+            ;;
+    esac
+else
+    usage 'help' 1
+    echo ''
+    echo "Error : Command '${1}' not in command list"
+    echo "Try 'boost_cmd list' to see the list of authorized commands"
+    exit 1
+fi
